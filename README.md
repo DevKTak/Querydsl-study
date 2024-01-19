@@ -370,3 +370,178 @@ String result = queryFactory
 > 참고: `member.age.stringValue()` 부분이 중요한데, 문자가 아닌 다른 타입들은 `stringValue()` 로 문 자로 변환할 수 있다. 이 방법은 **`ENUM`** 을처리할때도 자주 사용한다.
 
 - **✅ `Expressions.constant()`, `stringValue()`**
+
+## 프로젝션 결과 반환 - 기본
+> 프로젝션: select 대상 지정
+- 프로젝션 대상이 하나일 땐 구체적인 타입을 지정 (ex. List<String>)
+- 프로젝션 타입이 둘 이상일 땐 List<Tuple> 또는 DTO로 조회
+
+## 프로젝션 결과 반환 - DTO 조회
+### 순수 JPA에서 DTO 조회
+```java 
+select new study.querydsl.dto.MemberDto(m.username, m.age) " +
+             "from Member m", MemberDto.class)
+```
+
+
+### Querydsl 빈 생성(Bean population)
+**3 가지 방법**
+- **프로퍼티 접근**
+```java
+List<MemberDto> result = queryFactory
+         .select(Projections.bean(MemberDto.class,
+                 member.username,
+                 member.age))
+         .from(member)
+.fetch();
+```
+
+- **필드 직접 접근**
+```java
+ List<MemberDto> result = queryFactory
+         .select(Projections.fields(MemberDto.class,
+        member.username,
+        member.age))
+.from(member)
+.fetch();
+``` 
+
+- **별칭이 다를 때**
+```java
+package study.querydsl.dto;
+ import lombok.Data;
+ @Data
+ public class UserDto {
+     private String name;
+     private int age;
+ }
+```
+
+```java
+List<UserDto> fetch = queryFactory
+         .select(Projections.fields(UserDto.class,
+            member.username.as("name"),
+                ExpressionUtils.as(
+                JPAExpressions
+                    .select(memberSub.age.max())
+                    .from(memberSub), "age")
+            )
+         ).from(member)
+         .fetch();
+```
+- 프로퍼티나, 필드 접근 생성 방식에서 이름이 다를 때 해결 방안
+- `ExpressionUtils.as(source,alias)` : 필드나, 서브 쿼리에 별칭 적용
+- `username.as("memberName")` : 필드에 별칭 적용
+
+<br>
+
+- **생성자 사용**
+```java
+ List<MemberDto> result = queryFactory
+         .select(Projections.constructor(MemberDto.class,
+                 member.username,
+                 member.age))
+         .from(member)
+.fetch(); }
+```
+
+## 프로젝션과 결과 반환 - @QueryProjection
+> **생성자 + @QueryProjection**
+
+```java
+package study.querydsl.dto;
+ import com.querydsl.core.annotations.QueryProjection;
+ import lombok.Data;
+ @Data
+ public class MemberDto {
+     private String username;
+     private int age;
+    public MemberDto() {}
+    }
+    @QueryProjection
+    public MemberDto(String username, int age) {
+        this.username = username;
+        this.age = age;
+}   
+```
+- `./gradlew compileQuerydsl` 
+- `QMemberDto` 생성 확인
+
+### @QueryProjection 활용
+```java
+List<MemberDto> result = queryFactory
+         .select(new QMemberDto(member.username, member.age))
+         .from(member)
+         .fetch();
+```
+> 이 방법은 `컴파일러로 타입을 체크`할 수 있으므로 가장 안전한 방법이다. 다만 **`DTO에 QueryDSL 어노테이션을 유지 해야 하는 점(외부 라이브러리 의존)과 DTO까지 Q 파일을 생성해야 하는 단점이 있다.
+`**
+
+## 동적 쿼리 - BooleanBuilder 사용
+### 1. BooleanBuilder
+
+```java
+@Test
+public void 동적쿼리_BooleanBuilder() throws Exception {
+   String usernameParam = "member1";
+   Integer ageParam = 10;
+
+    List<Member> result = searchMember1(usernameParam, ageParam);
+    Assertions.assertThat(result.size()).isEqualTo(1);
+}
+
+private List<Member> searchMember1(String usernameCond, Integer ageCond) {
+    BooleanBuilder builder = new BooleanBuilder();
+    if (usernameCond != null) {
+        builder.and(member.username.eq(usernameCond));
+    }
+    if (ageCond != null) {
+        builder.and(member.age.eq(ageCond));
+    }
+    return queryFactory
+        .selectFrom(member)
+        .where(builder)
+        .fetch();
+}
+```
+
+### 2. Where 다중 파라미터 사용
+```java
+@Test
+public void 동적쿼리_WhereParam() throws Exception {
+     String usernameParam = "member1";
+     Integer ageParam = 10;
+     List<Member> result = searchMember2(usernameParam, ageParam);
+     Assertions.assertThat(result.size()).isEqualTo(1);
+ }
+ private List<Member> searchMember2(String usernameCond, Integer ageCond) {
+     return queryFactory
+             .selectFrom(member)
+             .where(usernameEq(usernameCond), ageEq(ageCond))
+             .fetch();
+}
+ private BooleanExpression usernameEq(String usernameCond) {
+     return usernameCond != null ? member.username.eq(usernameCond) : null;
+}
+private BooleanExpression ageEq(Integer ageCond) {
+    return ageCond != null ? member.age.eq(ageCond) : null;
+}
+```
+**Where 다중 파라미터의 장점**
+- `where` 조건에 **`null` 값은 무시된다.**
+- 메서드를 다른 쿼리에서도 **재활용** 할 수 있다.
+- 쿼리 자체의 **가독성**이 높아진다.
+- **조합가능**
+```java
+private BooleanExpression allEq(String usernameCond, Integer ageCond) {
+     return usernameEq(usernameCond).and(ageEq(ageCond));
+}
+```
+- **`null` 체크**는 주의해서 처리해야함
+
+
+
+
+
+
+- **✅ ``**
