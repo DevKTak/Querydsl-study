@@ -505,6 +505,7 @@ private List<Member> searchMember1(String usernameCond, Integer ageCond) {
 }
 ```
 
+## 동적 쿼리 - Where 다중 파라미터 사용
 ### 2. Where 다중 파라미터 사용
 ```java
 @Test
@@ -539,9 +540,114 @@ private BooleanExpression allEq(String usernameCond, Integer ageCond) {
 ```
 - **`null` 체크**는 주의해서 처리해야함
 
+## 수정, 삭제 벌크 연산
+> **주의:** 벌크 연산은 JPQL 배치와 마찬가지로, 영속성 컨텍스트에 있는 엔티티를 무시하고 실행되기 때문에 배치 쿼리를 실행하고 나면 영속성 컨텍스트를 초기화 하는 것이 안전하다.   
+>
+> **해결 방법**
+> 1. **em.refresh() 사용** 
+>       - 벌크 연산 수행 직후 정확한 salary 엔티티를 사용해야 한다면, **`em.refresh(salary)`** 를 사용하여 DB에서 salary를 다시 조회한다.   
+> 또는, **`em.flush();` `em.clear();`** 
+> 2. **벌크 연산 먼저 실행** 
+>       - 벌크 연산 먼저 실행하고 조회하면 된다. 가장 실용적인 해결책이며, JPA와 JDBC를 함께 사용할 때도 유용하다. 
+> 3. **벌크 연산 수행 후 영속성 컨텍스트 초기화**
+>       - 영속성 컨텍스트에 남아 있는 엔티티를 제거하는 방법이다.
 
+<br>
 
+**쿼리 한번으로 대량 데이터 수정**
+```java
+ long count = queryFactory
+        .update(member)
+        .set(member.username, "비회원") 
+        .where(member.age.lt(28)) 
+        .execute();
+```
 
+**기존 숫자에 1 더하기** 
+```java
+ long count = queryFactory
+        .update(member)
+        .set(member.age, member.age.add(1))
+        .execute();
+```
+곱하기: `multiply(x)`
+
+**쿼리 한번으로 대량 데이터 삭제** 
+```java
+ long count = queryFactory
+        .delete(member)
+        .where(member.age.gt(18))
+        .execute();
+```
+
+## SQL function 호출하기
+SQL function은 JPA와 같이 Dialect에 등록된 내용만 호출할 수 있다.
+
+**member => M으로 변경하는 replace 함수 사용**
+```java
+ String result = queryFactory
+         .select(Expressions.stringTemplate("function('replace', {0}, {1}, {2})",
+ member.username, "member", "M"))
+         .from(member)
+         .fetchFirst();
+```
+
+**소문자로 변경해서 비교해라.** 
+```java
+ .select(member.username)
+ .from(member)
+ .where(member.username.eq(Expressions.stringTemplate("function('lower', {0})",
+ member.username)))
+```
+**lower 같은 ansi 표준 함수들은 querydsl이 상당부분 내장하고 있다. 따라서 다음과 같이 처리해도 결과는 같다.** 
+```java
+.where(member.username.eq(member.username.lower()))
+ ```
+
+## 동적 쿼리와 성능 최적화 조회 - Where절 파라미터 사용
+
+**Where절에 파라미터를 사용한 예제**
+```java
+//회원명, 팀명, 나이(ageGoe, ageLoe)
+public List<MemberTeamDto> search(MemberSearchCondition condition) {
+  return queryFactory
+ }
+.select(new QMemberTeamDto(
+        member.id,
+        member.username,
+        member.age,
+        team.id,
+        team.name))
+.from(member)
+.leftJoin(member.team, team)
+.where(usernameEq(condition.getUsername()),
+        teamNameEq(condition.getTeamName()),
+        ageGoe(condition.getAgeGoe()),
+        ageLoe(condition.getAgeLoe()))
+.fetch();
+
+ private BooleanExpression usernameEq(String username) {
+     // return isEmpty(username) ? null : member.username.eq(username);
+     return hasText(username) ? member.username.eq(username) : null;
+}
+ private BooleanExpression teamNameEq(String teamName) {
+     return isEmpty(teamName) ? null : team.name.eq(teamName);
+}
+ private BooleanExpression ageGoe(Integer ageGoe) {
+     return ageGoe == null ? null : member.age.goe(ageGoe);
+}
+ private BooleanExpression ageLoe(Integer ageLoe) {
+     return ageLoe == null ? null : member.age.loe(ageLoe);
+}
+```
+
+## 사용자 정의 리포지토리
+<img width="792" alt="image" src="https://github.com/f-lab-edu/hotel-java/assets/68748397/5db45e94-61f2-48b1-be11-2fc4e493867f">
+
+https://www.inflearn.com/course/lecture?courseSlug=querydsl-%EC%8B%A4%EC%A0%84&unitId=30150&tab=curriculum
+
+## 스프링 데이터 페이징 활용1 - Querydsl 페이징 연동
+## 스프링 데이터 페이징 활용2 - CountQuery 최적화
 
 
 - **✅ ``**
