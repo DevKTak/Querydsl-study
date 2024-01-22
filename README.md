@@ -539,6 +539,7 @@ private BooleanExpression allEq(String usernameCond, Integer ageCond) {
 }
 ```
 - **`null` 체크**는 주의해서 처리해야함
+- 조합 관련해서 질문 링크: https://www.inflearn.com/questions/94056/%EA%B0%95%EC%82%AC%EB%8B%98-where-%EB%8B%A4%EC%A4%91-%ED%8C%8C%EB%9D%BC%EB%AF%B8%ED%84%B0%EB%A5%BC-%EC%9D%B4%EC%9A%A9%ED%95%9C-%EB%8F%99%EC%A0%81-%EC%BF%BC%EB%A6%AC-%EC%82%AC%EC%9A%A9%EC%97%90-%EB%8C%80%ED%95%9C-%EC%A7%88%EB%AC%B8%EC%9E%85%EB%8B%88%EB%8B%A4
 
 ## 수정, 삭제 벌크 연산
 > **주의:** 벌크 연산은 JPQL 배치와 마찬가지로, 영속성 컨텍스트에 있는 엔티티를 무시하고 실행되기 때문에 배치 쿼리를 실행하고 나면 영속성 컨텍스트를 초기화 하는 것이 안전하다.   
@@ -644,10 +645,100 @@ public List<MemberTeamDto> search(MemberSearchCondition condition) {
 ## 사용자 정의 리포지토리
 <img width="792" alt="image" src="https://github.com/f-lab-edu/hotel-java/assets/68748397/5db45e94-61f2-48b1-be11-2fc4e493867f">
 
-https://www.inflearn.com/course/lecture?courseSlug=querydsl-%EC%8B%A4%EC%A0%84&unitId=30150&tab=curriculum
+> \* 네이밍 규칙: MemberRepository + **`impl`** 
+
+강의 부분 링크: https://www.inflearn.com/course/lecture?courseSlug=querydsl-%EC%8B%A4%EC%A0%84&unitId=30150&tab=curriculum
 
 ## 스프링 데이터 페이징 활용1 - Querydsl 페이징 연동
 ## 스프링 데이터 페이징 활용2 - CountQuery 최적화
+> **Querydsl** `fetchResults()` , `fetchCount()` Deprecated(향후 미지원)
 
+**1. 사용자 정의 인터페이스 작성**
+```java
+public interface MemberRepositoryCustom {
+    Page<MemberTeamDto> searchPageComplex(MemberSearchCondition condition, Pageable pageable);
+}
+```
 
-- **✅ ``**
+**2. 사용자 정의 인터페이스 구현**
+```java
+import java.util.List;
+import static org.springframework.util.StringUtils.isEmpty;
+import static study.querydsl.entity.QMember.member;
+import static study.querydsl.entity.QTeam.team;
+
+import org.springframework.data.support.PageableExecutionUtils; //패키지 변경
+
+public class MemberRepositoryImpl implements MemberRepositoryCustom {
+    private final JPAQueryFactory queryFactory;
+
+    public MemberRepositoryImpl(EntityManager em) {
+        this.queryFactory = new JPAQueryFactory(em);
+    
+    }
+
+    @Override
+    //회원명, 팀명, 나이(ageGoe, ageLoe)
+    public <MemberTeamDto> searchPageComplex(MemberSearchCondition condition, Pageable pageable) {
+            List<MemberTeamDto> content = queryFactory
+                    .select(new QMemberTeamDto(
+                            member.id,
+                            member.username,
+                            member.age,
+                            team.id,
+                            team.name.as("teamName")))
+                    .from(member)
+                    .leftJoin(member.team, team)
+                    .where(usernameEq(condition.getUsername()),
+                            teamNameEq(condition.getTeamName()),
+                            ageGoe(condition.getAgeGoe()),
+                            ageLoe(condition.getAgeLoe()))
+                    .offset(pageable.getOffset())
+                    .limit(pageable.getPageSize())
+                    .fetch();
+
+            JPAQuery<Long> countQuery = queryFactory
+                    .select(member.count())
+                    .from(member)
+                    .leftJoin(member.team, team)
+                    .where(
+                            usernameEq(condition.getUsername()),
+                            teamNameEq(condition.getTeamName()),
+                            ageGoe(condition.getAgeGoe()),
+                            ageLoe(condition.getAgeLoe())
+                    );
+
+            return PageableExecutionUtils.getPage(content, pageable, countQuery::fetchOne);
+    }
+
+    private BooleanExpression usernameEq(String username) {
+        return isEmpty(username) ? null : member.username.eq(username);
+    }
+    private BooleanExpression teamNameEq(String teamName) {
+        return isEmpty(teamName) ? null : team.name.eq(teamName);
+    }
+    private BooleanExpression ageGoe(Integer ageGoe) {
+        return ageGoe == null ? null : member.age.goe(ageGoe);
+    }
+```
+> **PageableExecutionUtils.getPage()로 최적화**
+- count 쿼리가 생략 가능한 경우 생략해서 처리
+    - 페이지 시작이면서 컨텐츠 사이즈가 페이지 사이즈보다 작을 때
+    - 마지막 페이지 일 때 (offset + 컨텐츠 사이즈를 더해서 전체 사이즈 구함, 더 정확히는 마지막 페이지이면 서 컨텐츠 사이즈가 페이지 사이즈보다 작을 때)
+
+**3. 스프링 데이터 리포지토리에 사용자 정의 인터페이스 상속**
+```java
+public interface MemberRepository extends JpaRepository<Member, Long>, MemberRepositoryCustom {}
+```
+
+**4. 컨트롤러**
+```java
+@GetMapping("/v3/members")
+    public Page<MemberTeamDto> searchMemberV3(MemberSearchCondition condition, Pageable pageable) {
+        return memberRepository.searchPageComplex(condition, pageable);
+    }
+```
+
+**5. 호출**   
+**`http://localhost:8080/v3/members?size=5&page=2`**
+
