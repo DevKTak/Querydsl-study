@@ -679,7 +679,7 @@ public class MemberRepositoryImpl implements MemberRepositoryCustom {
 
     @Override
     //회원명, 팀명, 나이(ageGoe, ageLoe)
-    public <MemberTeamDto> searchPageComplex(MemberSearchCondition condition, Pageable pageable) {
+    public Page<MemberTeamDto> searchPageComplex(MemberSearchCondition condition, Pageable pageable) {
             List<MemberTeamDto> content = queryFactory
                     .select(new QMemberTeamDto(
                             member.id,
